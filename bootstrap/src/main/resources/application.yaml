@@ -41,7 +41,7 @@ rag:
 
   default:
     collection-name: rag_default_store
-    dimension: 4096
+    dimension: 1536
     metric-type: COSINE
 
   query-rewrite:
