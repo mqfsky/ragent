@@ -80,6 +80,7 @@ public class JdbcConversationMemorySummaryService implements ConversationMemoryS
 
     @Override
     public ChatMessage loadLatestSummary(String conversationId, String userId) {
+        // 数据库内查最新的一条摘要
         ConversationSummaryDO summary = conversationGroupService.findLatestSummary(conversationId, userId);
         return toChatMessage(summary);
     }

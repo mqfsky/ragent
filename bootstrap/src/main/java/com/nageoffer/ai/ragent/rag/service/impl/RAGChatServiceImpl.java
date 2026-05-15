@@ -63,7 +63,7 @@ public class RAGChatServiceImpl implements RAGChatService {
                 .taskId(taskId)
                 .deepThinking(thinkingEnabled)
                 .userId(UserContext.getUserId())
-                .callback(callback)
+                .callback(callback) // ctx的 callback 就是ChatEventHandler 内部有各种方法
                 .build();
 
         try {

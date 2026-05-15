@@ -73,6 +73,8 @@ public class ConversationMessageServiceImpl implements ConversationMessageServic
         }
 
         boolean asc = order == null || order == ConversationMessageOrder.ASC;
+
+        // 选最近 limit 条对话
         List<ConversationMessageDO> records = conversationMessageMapper.selectList(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
                         .eq(ConversationMessageDO::getConversationId, conversationId)
@@ -89,10 +91,13 @@ public class ConversationMessageServiceImpl implements ConversationMessageServic
             Collections.reverse(records);
         }
 
+        // 获取所有assistant 消息的 ID 列表
         List<String> assistantMessageIds = records.stream()
                 .filter(record -> "assistant".equalsIgnoreCase(record.getRole()))
                 .map(ConversationMessageDO::getId)
                 .toList();
+
+        // 获取用户对某条回答的点赞或点踩
         Map<String, Integer> votesByMessageId = feedbackService.getUserVotes(userId, assistantMessageIds);
 
         List<ConversationMessageVO> result = new ArrayList<>();

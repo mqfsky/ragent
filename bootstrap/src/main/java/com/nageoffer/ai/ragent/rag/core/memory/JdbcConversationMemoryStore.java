@@ -52,7 +52,7 @@ public class JdbcConversationMemoryStore implements ConversationMemoryStore {
 
     @Override
     public List<ChatMessage> loadHistory(String conversationId, String userId) {
-        int maxMessages = resolveMaxHistoryMessages();
+        int maxMessages = resolveMaxHistoryMessages(); // 最大保留数量
         List<ConversationMessageVO> dbMessages = conversationMessageService.listMessages(
                 conversationId,
                 userId,
@@ -64,10 +64,11 @@ public class JdbcConversationMemoryStore implements ConversationMemoryStore {
         }
 
         List<ChatMessage> result = dbMessages.stream()
-                .map(this::toChatMessage)
-                .filter(this::isHistoryMessage)
+                .map(this::toChatMessage) // 转成 chatmessage
+                .filter(this::isHistoryMessage) // 合法历史消息
                 .collect(Collectors.toList());
 
+        // 截取从 user 开头的历史消息
         return normalizeHistory(result);
     }
 
@@ -115,12 +116,15 @@ public class JdbcConversationMemoryStore implements ConversationMemoryStore {
             return List.of();
         }
         int start = 0;
+        // 跳过开头的ASSISTANT消息
         while (start < messages.size() && messages.get(start).getRole() == ChatMessage.Role.ASSISTANT) {
             start++;
         }
+        // 如果全是ASSISTANT则返回空
         if (start >= messages.size()) {
             return List.of();
         }
+        // 截取 user 开头的历史消息
         return messages.subList(start, messages.size());
     }
 

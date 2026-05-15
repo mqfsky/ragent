@@ -55,9 +55,11 @@ public class DefaultConversationMemoryService implements ConversationMemoryServi
         long startTime = System.currentTimeMillis();
         try {
             // 并行加载摘要和历史记录
+            // 从数据库查最近一条摘要
             CompletableFuture<ChatMessage> summaryFuture = CompletableFuture.supplyAsync(
                     () -> loadSummaryWithFallback(conversationId, userId), memoryLoadExecutor
             );
+            // 从数据库查最近的 n 轮对话，且为 user 开头
             CompletableFuture<List<ChatMessage>> historyFuture = CompletableFuture.supplyAsync(
                     () -> loadHistoryWithFallback(conversationId, userId), memoryLoadExecutor
             );
@@ -69,6 +71,11 @@ public class DefaultConversationMemoryService implements ConversationMemoryServi
                         List<ChatMessage> history = historyFuture.join();
                         log.debug("加载对话记忆 - conversationId: {}, userId: {}, 摘要: {}, 历史消息数: {}, 耗时: {}ms",
                                 conversationId, userId, summary != null, history.size(), System.currentTimeMillis() - startTime);
+                        // 将摘要包装为 system，后面跟上 memory
+                        // system: <conversation-summary>历史摘要</conversation-summary>
+                        // user: 最近一轮用户问题
+                        // assistant: 最近一轮助手回答
+                        // user: 当前问题
                         return attachSummary(summary, history);
                     })
                     .join();
