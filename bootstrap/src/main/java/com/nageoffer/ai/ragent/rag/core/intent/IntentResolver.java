@@ -83,6 +83,7 @@ public class IntentResolver {
     }
 
     public boolean isSystemOnly(List<NodeScore> nodeScores) {
+        // 只有一个意图，且 kind 是 SYSTEM，才算 SYSTEM-only
         return nodeScores.size() == 1
                 && nodeScores.get(0).getNode() != null
                 && nodeScores.get(0).getNode().getKind() == SYSTEM;

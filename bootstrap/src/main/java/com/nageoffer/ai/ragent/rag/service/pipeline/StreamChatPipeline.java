@@ -83,11 +83,11 @@ public class StreamChatPipeline {
         if (handleGuidance(ctx)) { // 歧义引导
             return;
         }
-        if (handleSystemOnly(ctx)) {
+        if (handleSystemOnly(ctx)) { // SYSTEM 意图短路
             return;
         }
 
-        RetrievalContext retrievalCtx = retrieve(ctx);
+        RetrievalContext retrievalCtx = retrieve(ctx); // KB/MCP 分流入口
         if (handleEmptyRetrieval(ctx, retrievalCtx)) {
             return;
         }
@@ -132,6 +132,7 @@ public class StreamChatPipeline {
 
     private boolean handleSystemOnly(StreamChatContext ctx) {
         List<SubQuestionIntent> subIntents = ctx.getSubIntents();
+        // 所有子问题都是 SYSTEM-only 才短路
         boolean allSystemOnly = subIntents.stream()
                 .allMatch(si -> intentResolver.isSystemOnly(si.nodeScores()));
         if (!allSystemOnly) {
@@ -143,6 +144,7 @@ public class StreamChatPipeline {
                 .filter(StrUtil::isNotBlank)
                 .findFirst()
                 .orElse(null);
+        // 构造并发送对话
         StreamCancellationHandle handle = streamSystemResponse(
                 ctx.getRewriteResult().rewrittenQuestion(),
                 ctx.getHistory(),
@@ -202,6 +204,7 @@ public class StreamChatPipeline {
                 .temperature(0.7D)
                 .thinking(false)
                 .build();
+        // 调用
         return llmService.streamChat(req, callback);
     }
 
