@@ -103,6 +103,8 @@ public class FixedSizeTextChunker implements ChunkingStrategy {
             lastEnd = end;
             if (end >= len) break;
 
+            // 固定大小 overlap 通过“回退下一块起点”实现：
+            // 下一个 chunk 真实范围从 end - overlap 开始，因此可能从句子/段落/代码块中间开始。
             int nextStart = Math.max(0, end - overlap);
             if (nextStart <= start) nextStart = end;
             start = nextStart;

@@ -1,6 +1,6 @@
 # 简历点 1：文档入库 Pipeline 复习笔记
 
-修改日期：2026-05-17
+修改日期：2026-05-19
 
 > 复习目标：围绕简历中的“节点编排式文档入库 Pipeline、Tika 多格式解析、固定大小与结构感知 Chunk 分块、Overlap 保留上下文”这条，能说清楚它是什么、处在 RAG 哪个阶段、代码怎么实现、两种处理模式有什么区别。
 
@@ -547,6 +547,170 @@ chunk2: 后30天内提交，逾期需要部门负责人审批 ...
 overlap 太小：上下文断裂
 overlap 太大：chunk 重复多，存储和检索噪声增加
 ```
+
+### 2026-05-19 追问补充：固定大小和结构感知的 overlap 差异
+
+今天重点复习的问题：
+
+```text
+固定大小分块和结构感知分块都可以产生 overlap，
+但它们产生 overlap 的方式不同。
+```
+
+#### 固定大小分块的 overlap
+
+固定大小分块在：
+
+```text
+bootstrap/src/main/java/com/nageoffer/ai/ragent/core/chunk/strategy/FixedSizeTextChunker.java
+```
+
+核心代码：
+
+```java
+int nextStart = Math.max(0, end - overlap);
+if (nextStart <= start) nextStart = end;
+start = nextStart;
+```
+
+含义：
+
+```text
+固定大小分块通过“回退下一块起点”来实现 overlap。
+也就是下一块真实范围从 end - overlap 开始。
+```
+
+举例：
+
+```text
+chunk1 原始范围：text[0, 100)
+overlap = 20
+chunk2 起点：100 - 20 = 80
+chunk2 原始范围：text[80, 180)
+```
+
+所以固定大小分块的 overlap 是：
+
+```text
+下一块往前多切一点
+```
+
+风险：
+
+```text
+因为它直接移动下一块起点，所以可能从句子、段落、标题、代码块中间开始。
+```
+
+#### 结构感知分块的 overlap
+
+结构感知分块在：
+
+```text
+bootstrap/src/main/java/com/nageoffer/ai/ragent/core/chunk/strategy/StructureAwareTextChunker.java
+```
+
+核心流程：
+
+```text
+1. 先扫描结构块
+2. 只在结构块边界打包 chunk
+3. 如果配置 overlap，把上一块尾部复制到下一块开头
+```
+
+它识别的结构块包括：
+
+```text
+HEADING：Markdown 标题
+PARA：普通段落
+CODE：代码块
+ATOMIC：图片、链接等原子行
+```
+
+核心代码：
+
+```java
+String body = text.substring(s, e);
+
+if (overlap > 0 && prevTail != null && !prevTail.isEmpty()) {
+    body = prevTail + body;
+}
+
+if (overlap > 0) {
+    prevTail = tailByChars(text.substring(s, e), overlap);
+}
+```
+
+含义：
+
+```text
+结构感知分块不会把下一块的结构起点往前移动。
+它保留下一块原本的结构边界，只是把上一块尾巴复制到下一块内容前面。
+```
+
+所以结构感知分块的 overlap 是：
+
+```text
+下一块不改变结构起点，只在开头贴一段上一块尾部
+```
+
+#### 为什么有时看起来和固定大小分块一样
+
+例子：
+
+```text
+chunk1:
+# 报销制度
+
+员工报销需要在发票开具后30天内提交。
+逾期需要部门负责人审批。
+
+chunk2 原始结构范围:
+## 差旅报销
+
+交通费和住宿费应在返程后7个工作日内提交。
+```
+
+如果 overlap 刚好是：
+
+```text
+负责人审批。
+```
+
+结构感知分块得到的第二个 chunk 是：
+
+```text
+负责人审批。
+## 差旅报销
+
+交通费和住宿费应在返程后7个工作日内提交。
+```
+
+固定大小分块在某些情况下也可能得到同样的最终文本。
+
+但两者本质不同：
+
+```text
+固定大小分块：
+chunk2 = text[负责人审批。的位置, 后续 end)
+下一块起点被 overlap 改掉了。
+
+结构感知分块：
+chunk2 = previousTail + text[## 差旅报销的位置, 后续 end)
+下一块原始结构起点仍然是 ## 差旅报销。
+```
+
+一句话记忆：
+
+```text
+固定大小 overlap = 回退下一块起点
+结构感知 overlap = 保留结构起点，复制上一块尾部
+```
+
+#### 面试表达
+
+可以这样回答：
+
+> 固定大小分块的 overlap 是通过 `nextStart = end - overlap` 实现的，本质是让下一块从上一块尾部往前回退一段开始，所以实现简单，但可能从句子或结构块中间开始。结构感知分块为了保留 Markdown 标题、段落、代码块等结构边界，不移动下一块的原始起点，而是把上一块尾部文本复制到下一块开头。最终文本在某些例子里可能相似，但结构感知保留了 chunk 的结构边界语义。
 
 ## 13. 面试高频回答模板
 

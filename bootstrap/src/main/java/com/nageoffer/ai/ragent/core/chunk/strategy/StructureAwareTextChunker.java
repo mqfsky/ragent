@@ -66,7 +66,8 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         int effectiveMin = opts.minChars();
         int effectiveOverlap = opts.overlapChars();
 
-        // 1) 扫描成“块”（记录原文的 start/end 下标，确保输出 substring 完全等于原文）
+        // 1) 先扫描成结构块，而不是直接按字符数硬切。
+        // 每个块只记录原文 start/end，后续 substring 时能保留标题、段落、代码块等原始结构。
         List<Block> blocks = segmentToBlocks(text);
 
         if (blocks.isEmpty()) {
@@ -78,10 +79,13 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
             return List.of(chunk); // 极端兜底：整体作为一个块
         }
 
-        // 2) 依据 min/target/max 打包成 chunk（只在块边界切分）
+        // 2) 依据 min/target/max 把多个结构块打包成 chunk。
+        // 这里只在块边界切分，避免把 Markdown 标题、段落、代码块从中间切碎。
         List<int[]> ranges = packBlocksToChunks(blocks, text.length(), effectiveMin, effectiveTarget, effectiveMax);
 
-        // 3)（可选）加入重叠：为保持“只在块边界切分”，这里不在中间加重叠，若开启 overlap，仅复制“上一 chunk 的尾部全文子串”到下一 chunk 的开头
+        // 3)（可选）加入重叠。
+        // 区别于固定大小分块的“回退下一块起点”，结构感知分块保留下一块的结构起点，
+        // 只把上一 chunk 的尾部复制到下一 chunk 开头，用来补上下文。
         List<VectorChunk> out = materialize(text, ranges, effectiveOverlap);
 
         // 编号从 0 递增
@@ -225,6 +229,7 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         List<int[]> ranges = new ArrayList<>();
         int i = 0;
         while (i < blocks.size()) {
+            // 当前 chunk 的原始范围从第一个结构块开始，后面只追加完整结构块。
             int chunkStart = blocks.get(i).start;
             int chunkEnd = blocks.get(i).end; // 不含
             int size = chunkEnd - chunkStart;
@@ -250,6 +255,7 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
                 }
             }
 
+            // 记录的是原文 [start, end) 范围，真正的文本在 materialize 阶段再切出。
             ranges.add(new int[]{chunkStart, chunkEnd});
             i = j;
         }
@@ -277,8 +283,11 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         for (int k = 0; k < ranges.size(); k++) {
             int s = ranges.get(k)[0];
             int e = ranges.get(k)[1];
+            // body 是当前 chunk 原本的结构化正文，起点仍然是结构块边界。
             String body = text.substring(s, e);
             if (overlap > 0 && prevTail != null && !prevTail.isEmpty()) {
+                // 结构感知 overlap 不移动 s，而是把上一块尾巴拼到当前正文前面。
+                // 因此最终文本可能和固定分块相似，但当前 chunk 的结构边界没有被改掉。
                 body = prevTail + body;
             }
 
