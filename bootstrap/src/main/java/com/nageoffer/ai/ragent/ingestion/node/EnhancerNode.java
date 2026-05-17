@@ -131,9 +131,12 @@ public class EnhancerNode implements IngestionNode {
 
     private void applyTaskResult(IngestionContext context, EnhanceType type, String response) {
         switch (type) {
+            // 文档级上下文增强：改写/补充整篇文本，后续 chunker 会优先使用 enhancedText 分块。
             case CONTEXT_ENHANCE -> context.setEnhancedText(StringUtils.hasText(response) ? response.trim() : response);
+            // 文档级关键词和问题不改变正文，作为任务元信息写入上下文。
             case KEYWORDS -> context.setKeywords(JsonResponseParser.parseStringList(response));
             case QUESTIONS -> context.setQuestions(JsonResponseParser.parseStringList(response));
+            // 文档级结构化信息会合入 context.metadata，后续可继续传递到 chunk 或索引元数据。
             case METADATA -> context.getMetadata().putAll(JsonResponseParser.parseObject(response));
             default -> {
             }

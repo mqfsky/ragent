@@ -125,6 +125,7 @@ public class EnricherNode implements IngestionNode {
 
     private void applyResult(VectorChunk chunk, ChunkEnrichType type, String response) {
         switch (type) {
+            // Chunk 级增强不改 chunk.content，只把 LLM 结果附加到 chunk.metadata。
             case KEYWORDS -> chunk.getMetadata().put("keywords", JsonResponseParser.parseStringList(response));
             case SUMMARY ->
                     chunk.getMetadata().put("summary", StringUtils.hasText(response) ? response.trim() : response);

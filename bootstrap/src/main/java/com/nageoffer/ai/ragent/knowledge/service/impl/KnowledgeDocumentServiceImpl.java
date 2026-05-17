@@ -198,8 +198,10 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
     private void runChunkTask(KnowledgeDocumentDO documentDO) {
         String docId = documentDO.getId();
+        // 文档分块支持两条路径：CHUNK 直接分块，PIPELINE 通过节点编排处理。
         ProcessMode processMode = ProcessMode.normalize(documentDO.getProcessMode());
 
+        // 先落一条 running 日志，后续统一回填耗时、分块数量和错误信息。
         KnowledgeDocumentChunkLogDO chunkLog = KnowledgeDocumentChunkLogDO.builder()
                 .docId(docId)
                 .status(DocumentStatus.RUNNING.getCode())
@@ -219,10 +221,12 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         try {
             List<VectorChunk> chunkResults;
             if (ProcessMode.PIPELINE == processMode) {
+                // Pipeline 模式：分块和 embedding 由 Pipeline 内的 chunker 节点完成。
                 long start = System.currentTimeMillis();
                 chunkResults = runPipelineProcess(documentDO);
                 chunkDuration = System.currentTimeMillis() - start;
             } else {
+                // CHUNK 模式：当前方法链路直接执行 Extract -> Chunk -> Embed。
                 ChunkProcessResult result = runChunkProcess(documentDO);
                 extractDuration = result.extractDuration();
                 chunkDuration = result.chunkDuration();
@@ -231,7 +235,9 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             }
 
             long persistStart = System.currentTimeMillis();
+            // collectionName 是向量库集合名，通常对应当前知识库的向量空间。
             String collectionName = resolveCollectionName(documentDO.getKbId());
+            // 两种模式最终都收敛为带 embedding 的 VectorChunk，再统一持久化。
             int savedCount = persistChunksAndVectorsAtomically(collectionName, docId, chunkResults);
             persistDuration = System.currentTimeMillis() - persistStart;
 
@@ -248,6 +254,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     }
 
     private int persistChunksAndVectorsAtomically(String collectionName, String docId, List<VectorChunk> chunkResults) {
+        // 业务库只保存 chunk 的可编辑文本信息；embedding 保留在原始 VectorChunk 中写入向量库。
         List<KnowledgeChunkCreateRequest> chunks = chunkResults.stream()
                 .map(vc -> {
                     KnowledgeChunkCreateRequest req = new KnowledgeChunkCreateRequest();
@@ -258,6 +265,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 })
                 .toList();
         transactionOperations.executeWithoutResult(status -> {
+            // 重新分块时先清理旧数据，保证业务库 chunk 和向量库 chunk 同步替换。
             knowledgeChunkService.deleteByDocId(docId);
             knowledgeChunkService.batchCreate(docId, chunks);
             vectorStoreService.deleteDocumentVectors(collectionName, docId);
@@ -299,19 +307,23 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         ChunkingMode chunkingMode = ChunkingMode.fromValue(documentDO.getChunkStrategy());
         KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(documentDO.getKbId());
         String embeddingModel = kbDO.getEmbeddingModel();
+        // chunkConfig 根据策略转成类型安全参数，例如 fixed_size 的 chunkSize/overlapSize。
         ChunkingOptions config = buildChunkingOptions(chunkingMode, documentDO);
 
         long extractStart = System.currentTimeMillis();
         try (InputStream is = fileStorageService.openStream(documentDO.getFileUrl())) {
+            // CHUNK 模式主路径先用 Tika 从原始文件中抽取纯文本。
             String text = parserSelector.select(ParserType.TIKA.getType()).extractText(is, documentDO.getDocName());
             long extractDuration = System.currentTimeMillis() - extractStart;
 
             ChunkingStrategy chunkingStrategy = chunkingStrategyFactory.requireStrategy(chunkingMode);
             long chunkStart = System.currentTimeMillis();
+            // 这里生成的 VectorChunk 已包含 chunkId、index 和 content，embedding 下一步补齐。
             List<VectorChunk> chunks = chunkingStrategy.chunk(text, config);
             long chunkDuration = System.currentTimeMillis() - chunkStart;
 
             long embedStart = System.currentTimeMillis();
+            // 批量为每个 chunk 生成向量，后续统一写入向量库 collection。
             chunkEmbeddingService.embed(chunks, embeddingModel);
             long embedDuration = System.currentTimeMillis() - embedStart;
 
@@ -342,6 +354,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
         KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(documentDO.getKbId());
 
+        // PipelineDefinition 包含用户配置的节点、settings、condition 和 nextNodeId 连线。
         PipelineDefinition pipelineDef = ingestionPipelineService.getDefinition(pipelineId);
 
         byte[] fileBytes;
@@ -359,15 +372,18 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 .vectorSpaceId(VectorSpaceId.builder()
                         .logicalName(kbDO.getCollectionName())
                         .build())
+                // Pipeline 内可以配置 indexer 节点；这里仅让它校验，最终由 runChunkTask 统一写库。
                 .skipIndexerWrite(true)
                 .build();
 
+        // 执行引擎沿 nextNodeId 调度节点，chunker 节点会把分块结果写入 context.chunks。
         IngestionContext result = ingestionEngine.execute(pipelineDef, context);
 
         if (result.getError() != null) {
             throw new RuntimeException("Pipeline执行失败：" + result.getError().getMessage(), result.getError());
         }
 
+        // Pipeline 模式最终也必须产出 List<VectorChunk>，用于后续统一落业务库和向量库。
         List<VectorChunk> chunks = result.getChunks();
         if (chunks == null || chunks.isEmpty()) {
             log.warn("Pipeline执行完成但未产生分块：docId={}", docId);

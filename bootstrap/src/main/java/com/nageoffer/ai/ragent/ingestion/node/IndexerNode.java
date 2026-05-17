@@ -83,11 +83,13 @@ public class IndexerNode implements IngestionNode {
             return NodeResult.fail(new ClientException("没有可索引的分块"));
         }
         IndexerSettings settings = parseSettings(config.getSettings());
+        // collectionName 是向量库集合名，通常对应一个知识库的向量空间。
         String collectionName = resolveCollectionName(context);
         if (!StringUtils.hasText(collectionName)) {
             return NodeResult.fail(new ClientException("索引器需要指定集合名称"));
         }
 
+        // 写向量库前先校验 embedding 维度，避免脏数据进入 collection。
         int expectedDim = resolveDimension(chunks);
         if (expectedDim <= 0) {
             return NodeResult.fail(new ClientException("未配置向量维度"));
@@ -100,6 +102,7 @@ public class IndexerNode implements IngestionNode {
         }
 
         ensureVectorSpace(collectionName);
+        // buildRows 会补齐 chunkId、embedding 和可选 metadata，供后续向量库写入。
         List<JsonObject> rows = buildRows(context, chunks, vectorArray, settings.getMetadataFields());
 
         if (context.isSkipIndexerWrite()) {
