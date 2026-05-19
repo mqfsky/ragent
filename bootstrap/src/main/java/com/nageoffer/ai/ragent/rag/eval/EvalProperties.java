@@ -15,47 +15,28 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.infra.enums;
+package com.nageoffer.ai.ragent.rag.eval;
 
-import lombok.Getter;
-import lombok.RequiredArgsConstructor;
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
 
 /**
- * 模型提供商枚举
- * 统一管理提供商名称，避免散落的字符串常量
+ * 评测模式配置
+ * <p>
+ * 用途：控制评测专用接口（/rag/eval/sync）和 AOP 切面是否启用
+ * 生产环境默认 false，评测环境通过 -Dragent.eval.enabled=true 或独立 profile 开启
  */
-@Getter
-@RequiredArgsConstructor
-public enum ModelProvider {
+@Data
+@Component
+@ConfigurationProperties(prefix = "app.eval")
+public class EvalProperties {
 
     /**
-     * Ollama 本地模型服务
+     * 是否启用评测模式
+     * <p>
+     * false（默认）：EvalController 和 EvalRetrievalCaptureAspect 不注册，零运行时开销
+     * true：注册评测接口和切面，用于评测项目调用
      */
-    OLLAMA("ollama"),
-
-    /**
-     * 阿里云百炼大模型平台
-     */
-    BAI_LIAN("bailian"),
-
-    /**
-     * 硅基流动 AI 模型服务
-     */
-    SILICON_FLOW("siliconflow"),
-
-    /**
-     * 推理时代 AI 模型服务
-     */
-    AI_HUB_MIX("aihubmix"),
-
-    /**
-     * 空实现，用于测试或占位
-     */
-    NOOP("noop");
-
-    private final String id;
-
-    public boolean matches(String provider) {
-        return provider != null && provider.equalsIgnoreCase(id);
-    }
+    private boolean enabled = false;
 }
