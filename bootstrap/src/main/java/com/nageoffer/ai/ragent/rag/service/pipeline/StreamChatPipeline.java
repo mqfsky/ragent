@@ -78,7 +78,7 @@ public class StreamChatPipeline {
     public void execute(StreamChatContext ctx) {
         loadMemory(ctx); // 加载记忆
         rewriteQuery(ctx); // 重写问题
-        resolveIntents(ctx); // 分析意图
+        resolveIntents(ctx); // 分析意图，得到子问题的意图
 
         if (handleGuidance(ctx)) { // 歧义引导
             return;

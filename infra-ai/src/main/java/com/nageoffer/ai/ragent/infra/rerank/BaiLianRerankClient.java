@@ -81,12 +81,15 @@ public class BaiLianRerankClient implements RerankClient {
     }
 
     private List<RetrievedChunk> doRerank(String query, List<RetrievedChunk> candidates, int topN, ModelTarget target) {
+        // 根据路由选中的模型目标解析 provider 配置，缺少 provider 或模型配置时会直接抛出异常。
         AIModelProperties.ProviderConfig provider = HttpResponseHelper.requireProvider(target, provider());
 
         if (candidates == null || candidates.isEmpty() || topN <= 0) {
             return List.of();
         }
 
+        // 组装百炼 Rerank 请求体：query 是用户问题，documents 是候选 Chunk 文本列表。
+        // Rerank 模型只负责判断这些候选文本与 query 的相关性，并返回排序后的下标和相关性分数。
         JsonObject reqBody = new JsonObject();
         reqBody.addProperty("model", HttpResponseHelper.requireModel(target, provider()));
 
@@ -106,6 +109,7 @@ public class BaiLianRerankClient implements RerankClient {
         reqBody.add("input", input);
         reqBody.add("parameters", parameters);
 
+        // 请求地址由 provider 基础 URL、候选模型和 RERANK 能力共同解析，方便多模型路由复用。
         Request request = new Request.Builder()
                 .url(ModelUrlResolver.resolveUrl(provider, target.candidate(), ModelCapability.RERANK))
                 .post(RequestBody.create(reqBody.toString(), HttpMediaTypes.JSON))
@@ -117,6 +121,7 @@ public class BaiLianRerankClient implements RerankClient {
             if (!response.isSuccessful()) {
                 String body = HttpResponseHelper.readBody(response.body());
                 log.warn("{} rerank 请求失败: status={}, body={}", provider(), response.code(), body);
+                // HTTP 非 2xx 统一转换成模型客户端异常，交给外层模型路由做失败记录和 fallback。
                 throw new ModelClientException(
                         provider() + " rerank 请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),
@@ -128,6 +133,7 @@ public class BaiLianRerankClient implements RerankClient {
             throw new ModelClientException(provider() + " rerank 请求失败: " + e.getMessage(), ModelClientErrorType.NETWORK_ERROR, null, e);
         }
 
+        // 百炼响应的有效排序结果位于 output.results，缺字段时按非法响应处理。
         JsonObject output = requireOutput(respJson);
 
         JsonArray results = output.getAsJsonArray("results");
@@ -138,6 +144,8 @@ public class BaiLianRerankClient implements RerankClient {
         List<RetrievedChunk> reranked = new ArrayList<>();
         Set<String> addedIds = new HashSet<>();
 
+        // Rerank 结果里的 index 指向原 candidates 列表下标。
+        // 因此这里按 index 找回原 Chunk，再用 relevance_score 覆盖向量检索阶段的 score。
         for (JsonElement elem : results) {
             if (!elem.isJsonObject()) {
                 continue;
@@ -164,11 +172,13 @@ public class BaiLianRerankClient implements RerankClient {
             reranked.add(hit);
             addedIds.add(src.getId());
 
+            // 只保留最终需要的 topN 条，避免把多召回候选全部带入后续 Prompt。
             if (reranked.size() >= topN) {
                 break;
             }
         }
 
+        // 如果 Rerank 服务返回的有效结果不足 topN，用原候选顺序补齐，保证尽量返回足够上下文。
         if (reranked.size() < topN) {
             for (RetrievedChunk c : candidates) {
                 if (addedIds.add(c.getId())) {

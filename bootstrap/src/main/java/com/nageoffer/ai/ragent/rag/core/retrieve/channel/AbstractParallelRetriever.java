@@ -68,6 +68,7 @@ public abstract class AbstractParallelRetriever<T> {
         List<RetrievalFuture<T>> futures = targets.stream()
                 .map(target -> {
                     CompletableFuture<List<RetrievedChunk>> future = CompletableFuture.supplyAsync(
+                            // 在每个 target （collection）内搜索
                             () -> createRetrievalTask(question, target, topK),
                             executor
                     );

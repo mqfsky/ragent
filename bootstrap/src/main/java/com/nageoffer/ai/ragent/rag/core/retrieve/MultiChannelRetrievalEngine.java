@@ -93,14 +93,22 @@ public class MultiChannelRetrievalEngine {
         log.info("启用的检索通道：{}",
                 enabledChannels.stream().map(SearchChannel::getName).toList());
 
+        // 将每个已启用的检索通道提交到专用线程池异步执行。
+        // 例如本次请求同时启用了意图定向检索和全局向量检索时，
+        // 两个 channel.search(context) 会并行执行，避免串行检索拉长响应时间。
         List<CompletableFuture<SearchChannelResult>> futures = enabledChannels.stream()
                 .map(channel -> CompletableFuture.supplyAsync(
                         () -> {
                             try {
                                 log.info("执行检索通道：{}", channel.getName());
+                                // 具体检索策略由各 SearchChannel 实现类负责：
+                                // IntentDirectedSearchChannel 会按意图定向检索，
+                                // VectorGlobalSearchChannel 会做全局向量检索兜底。
                                 return channel.search(context);
                             } catch (Exception e) {
                                 log.error("检索通道 {} 执行失败", channel.getName(), e);
+                                // 单个检索通道失败不应中断整个多通道检索流程，
+                                // 这里降级为空结果，后续仍可合并其他成功通道的结果。
                                 return emptyResult(channel);
                             }
                         },
