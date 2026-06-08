@@ -61,6 +61,7 @@ public class ChatQueueLimiter {
     private final MemoryProperties memoryProperties;
 
     public void enqueue(String question, String conversationId, SseEmitter emitter, Runnable onAcquire) {
+        // 检查总开关
         if (!Boolean.TRUE.equals(rateLimitProperties.getGlobalEnabled())) {
             try {
                 chatEntryExecutor.execute(onAcquire);

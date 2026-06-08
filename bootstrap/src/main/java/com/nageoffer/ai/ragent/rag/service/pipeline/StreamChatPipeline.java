@@ -73,7 +73,7 @@ public class StreamChatPipeline {
     private final StreamTaskManager taskManager;
 
     /**
-     * 执行流式对话管道
+     * 执行流式对话管道，流水线 8 阶段
      */
     public void execute(StreamChatContext ctx) {
         loadMemory(ctx); // 加载记忆

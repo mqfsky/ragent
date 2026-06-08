@@ -51,8 +51,10 @@ public class RAGChatServiceImpl implements RAGChatService {
     public void streamChat(String question, String conversationId, Boolean deepThinking, SseEmitter emitter) {
         String actualConversationId = StrUtil.isBlank(conversationId) ? IdUtil.getSnowflakeNextIdStr() : conversationId;
         String taskId = IdUtil.getSnowflakeNextIdStr();
+        // 回调实例
         StreamCallback callback = callbackFactory.createChatEventHandler(emitter, actualConversationId, taskId);
 
+        // 将chatPipeline.execute(ctx)这个动作变成了一个可延迟、可异步、可丢给线程池的可执行对象，由chatQueueLimiter决定何时执行
         chatQueueLimiter.enqueue(question, actualConversationId, emitter,
                 () -> traceRunner.run(question, actualConversationId, taskId, callback, traceAware -> {
                     StreamChatContext ctx = StreamChatContext.builder()

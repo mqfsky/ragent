@@ -80,6 +80,7 @@ public class StreamTaskManager {
         StreamTaskInfo taskInfo = getOrCreate(taskId);
         taskInfo.sender = sender;
         taskInfo.onCancelSupplier = onCancelSupplier;
+        // 检查是否任务已经取消，如果已经取消则直接 complete，不给 LLM 流启动的机会
         if (isTaskCancelledInRedis(taskId, taskInfo)) {
             CompletionPayload payload = taskInfo.onCancelSupplier.get();
             sendCancelAndDone(sender, payload);
@@ -145,6 +146,7 @@ public class StreamTaskManager {
 
         // 在取消时执行回调，保存已累积的内容
         if (taskInfo.sender != null) {
+            // 如果 llm 已经生成一部分，则调用buildCompletionPayloadOnCancel落库，就是这个 get
             CompletionPayload payload = taskInfo.onCancelSupplier.get();
             sendCancelAndDone(taskInfo.sender, payload);
             taskInfo.sender.complete();

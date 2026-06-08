@@ -167,7 +167,9 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
         }
     }
 
+    // 发送请求，接收请求后调用 onthinking onContent oncomplete
     private void doStream(Call call, StreamCallback callback, AtomicBoolean cancelled, boolean reasoningEnabled) {
+        // 发送请求
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) {
                 String body = HttpResponseHelper.readBody(response.body());
@@ -184,6 +186,7 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
             BufferedSource source = body.source();
             boolean completed = false;
             while (!cancelled.get()) {
+                // 一行一行读 llm 输出
                 String line = source.readUtf8Line();
                 if (line == null) {
                     break;

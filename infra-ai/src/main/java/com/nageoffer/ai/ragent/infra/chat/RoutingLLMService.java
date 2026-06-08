@@ -101,6 +101,7 @@ public class RoutingLLMService implements LLMService {
     @Override
     @RagTraceNode(name = "llm-stream-routing", type = "LLM_ROUTING")
     public StreamCancellationHandle streamChat(ChatRequest request, StreamCallback callback) {
+        // 候选列表
         List<ModelTarget> targets = selector.selectChatCandidates(Boolean.TRUE.equals(request.getThinking()));
         if (CollUtil.isEmpty(targets)) {
             throw new RemoteException(STREAM_NO_PROVIDER_MESSAGE);
@@ -109,11 +110,13 @@ public class RoutingLLMService implements LLMService {
         String label = ModelCapability.CHAT.getDisplayName();
         Throwable lastError = null;
 
+        // 逐个尝试
         for (ModelTarget target : targets) {
             ChatClient client = resolveClient(target, label);
             if (client == null) {
                 continue;
             }
+            // 断路器检查
             if (!healthStore.allowCall(target.id())) {
                 continue;
             }
@@ -122,6 +125,8 @@ public class RoutingLLMService implements LLMService {
 
             StreamCancellationHandle handle;
             try {
+                // 调 LLM 发送消息，llm 是如何返回消息的？
+                // 通过 StreamAsyncExecutor.submit() 提交到模型流线程池异步执行，立即返回一个 StreamCancellationHandle
                 handle = client.streamChat(request, bridge, target);
             } catch (Exception e) {
                 healthStore.markFailure(target.id());

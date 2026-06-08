@@ -80,7 +80,9 @@ public class StreamChatEventHandler implements StreamCallback {
      * 初始化：发送元数据事件并注册任务
      */
     private void initialize() {
+        // 发送 META 事件，前端收到后就知道这个连接对应哪个会话、哪个任务，后续如果要停止生成，就用这个 taskId 调停止接口
         sender.sendEvent(SSEEventType.META.value(), new MetaPayload(conversationId, taskId));
+        // 在 StreamTaskManager 注册任务—，绑定 sender 和取消回调函数
         taskManager.register(taskId, sender, this::buildCompletionPayloadOnCancel);
     }
 

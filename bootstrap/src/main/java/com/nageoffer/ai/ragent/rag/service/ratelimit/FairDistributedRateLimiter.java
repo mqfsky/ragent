@@ -141,8 +141,11 @@ public final class FairDistributedRateLimiter {
             req.cancelBinder().accept(ticket::cancel);
         }
         // entry 存活标记必须先于入队写入，否则 race 窗口内的并发 claim 会把刚入队的条目当僵尸 ZREM
+        // 标活
         setEntryMarker(ticket.requestId, req.maxWaitMillis());
         RScoredSortedSet<String> queue = redissonClient.getScoredSortedSet(queueKey, StringCodec.INSTANCE);
+        // 入队
+        // 计数器（用于排序）， id
         queue.add(nextQueueSeq(), ticket.requestId);
         if (tryAcquireIfReady(ticket)) {
             return;
@@ -299,13 +302,16 @@ public final class FairDistributedRateLimiter {
     // ==================== 抢占核心 ====================
 
     private boolean tryAcquireIfReady(Ticket ticket) {
+        // ticket 状态是 pendding 才是等待状态
         if (!ticket.isPending()) {
             return false;
         }
+        // 信号量够不够
         int avail = availablePermits();
         if (avail <= 0) {
             return false;
         }
+
         long claimedScore = claimIfReady(ticket.requestId, avail);
         if (claimedScore < 0L) {
             return false;
