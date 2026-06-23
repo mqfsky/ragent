@@ -39,6 +39,11 @@ public class SearchChannelProperties {
      */
     private Channels channels = new Channels();
 
+    /**
+     * RRF 融合配置
+     */
+    private Rrf rrf = new Rrf();
+
     @Data
     public static class Channels {
 
@@ -51,6 +56,11 @@ public class SearchChannelProperties {
          * 意图定向检索配置
          */
         private IntentDirected intentDirected = new IntentDirected();
+
+        /**
+         * 关键词检索配置
+         */
+        private Keyword keyword = new Keyword();
     }
 
     @Data
@@ -98,5 +108,43 @@ public class SearchChannelProperties {
          * TopK 倍数
          */
         private int topKMultiplier = 2;
+    }
+
+    @Data
+    public static class Keyword {
+
+        /**
+         * 是否启用
+         */
+        private boolean enabled = true;
+
+        /**
+         * TopK 倍数
+         */
+        private int topKMultiplier = 3;
+
+        /**
+         * PostgreSQL 全文检索配置
+         */
+        private String textSearchConfig = "simple";
+    }
+
+    @Data
+    public static class Rrf {
+
+        /**
+         * 是否启用 RRF 融合
+         */
+        private boolean enabled = true;
+
+        /**
+         * RRF 平滑常数
+         */
+        private int k = 60;
+
+        /**
+         * Rerank 前最多保留的候选数量
+         */
+        private int maxCandidates = 50;
     }
 }
