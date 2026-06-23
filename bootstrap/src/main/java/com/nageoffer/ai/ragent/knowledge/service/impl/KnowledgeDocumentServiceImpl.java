@@ -798,6 +798,15 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         } catch (Exception e) {
             throw new ClientException("分块参数JSON格式不合法");
         }
+        if (mode == ChunkingMode.STRUCTURE_AWARE) {
+            boolean parentChild = hasAllKeys(config, "parentTargetChars", "parentMaxChars",
+                    "childChunkSize", "childOverlapSize", "siblingWindow");
+            boolean legacy = hasAllKeys(config, "targetChars", "overlapChars", "maxChars", "minChars");
+            if (!parentChild && !legacy) {
+                throw new ClientException("分块参数缺少必要字段: parentTargetChars 或 targetChars");
+            }
+            return json;
+        }
         for (String key : mode.getDefaultConfig().keySet()) {
             if (!config.containsKey(key)) {
                 throw new ClientException("分块参数缺少必要字段: " + key);
@@ -817,6 +826,15 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             log.warn("分块参数解析失败: {}", json, e);
             return Map.of();
         }
+    }
+
+    private boolean hasAllKeys(Map<String, Object> config, String... keys) {
+        for (String key : keys) {
+            if (!config.containsKey(key)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override

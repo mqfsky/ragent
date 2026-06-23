@@ -15,22 +15,13 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.core.chunk;
+package com.nageoffer.ai.ragent.rag.core.retrieve;
 
-import java.util.Map;
+import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 
-/**
- * 分块配置 sealed interface
- * 通过具体 record 实现类型安全的配置传递，消除魔法字符串
- *
- * @see FixedSizeOptions 固定大小切分配置
- * @see TextBoundaryOptions 文本边界切分配置（结构感知等）
- * @see ParentChildOptions 父子分块配置
- */
-public sealed interface ChunkingOptions permits FixedSizeOptions, TextBoundaryOptions, ParentChildOptions {
+import java.util.List;
 
-    /**
-     * 将配置导出为 Map，用于 API 返回和配置校验
-     */
-    Map<String, Integer> toConfigMap();
+public interface SiblingChunkLookupService {
+
+    List<RetrievedChunk> findSiblings(String collectionName, String parentId, int startChildIndex, int endChildIndex);
 }

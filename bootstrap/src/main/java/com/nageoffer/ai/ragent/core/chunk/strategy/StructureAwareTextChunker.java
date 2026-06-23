@@ -22,6 +22,7 @@ import cn.hutool.core.util.StrUtil;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingMode;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingOptions;
 import com.nageoffer.ai.ragent.core.chunk.ChunkingStrategy;
+import com.nageoffer.ai.ragent.core.chunk.ParentChildOptions;
 import com.nageoffer.ai.ragent.core.chunk.TextBoundaryOptions;
 import com.nageoffer.ai.ragent.core.chunk.VectorChunk;
 import lombok.AllArgsConstructor;
@@ -30,7 +31,9 @@ import lombok.ToString;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -59,6 +62,10 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
 
         // 统一行尾：Windows \r\n → \n，老 Mac \r → \n，避免 \r 残留导致空行/标题识别失败
         text = text.replace("\r\n", "\n").replace("\r", "\n");
+
+        if (config instanceof ParentChildOptions parentChildOptions) {
+            return chunkParentChild(text, parentChildOptions);
+        }
 
         TextBoundaryOptions opts = (TextBoundaryOptions) config;
         int effectiveTarget = opts.targetChars();
@@ -96,6 +103,53 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         return out;
     }
 
+    private List<VectorChunk> chunkParentChild(String text, ParentChildOptions opts) {
+        List<ParentRange> parents = buildParentRanges(text, opts);
+        if (parents.isEmpty()) {
+            return List.of();
+        }
+
+        List<VectorChunk> chunks = new ArrayList<>();
+        int globalIndex = 0;
+        for (int parentIndex = 0; parentIndex < parents.size(); parentIndex++) {
+            ParentRange parent = parents.get(parentIndex);
+            List<int[]> childRanges = splitRangeToChildren(
+                    text,
+                    parent.start,
+                    parent.end,
+                    Math.max(1, opts.childChunkSize()),
+                    Math.max(0, opts.childOverlapSize()));
+            List<int[]> nonBlankRanges = childRanges.stream()
+                    .filter(range -> StrUtil.isNotBlank(text.substring(range[0], range[1])))
+                    .toList();
+            if (nonBlankRanges.isEmpty()) {
+                continue;
+            }
+
+            String parentId = IdUtil.getSnowflakeNextIdStr();
+            int parentChildCount = nonBlankRanges.size();
+            for (int childIndex = 0; childIndex < nonBlankRanges.size(); childIndex++) {
+                int[] range = nonBlankRanges.get(childIndex);
+                Map<String, Object> metadata = new HashMap<>();
+                metadata.put("chunkType", "child");
+                metadata.put("parentId", parentId);
+                metadata.put("parentIndex", parentIndex);
+                metadata.put("childIndex", childIndex);
+                metadata.put("parentChildCount", parentChildCount);
+                metadata.put("headingPath", parent.headingPath);
+                metadata.put("siblingWindow", Math.max(0, opts.siblingWindow()));
+
+                chunks.add(VectorChunk.builder()
+                        .chunkId(IdUtil.getSnowflakeNextIdStr())
+                        .index(globalIndex++)
+                        .content(text.substring(range[0], range[1]))
+                        .metadata(metadata)
+                        .build());
+            }
+        }
+        return chunks;
+    }
+
     // ----------- 块模型 -----------
     @Getter
     @ToString
@@ -106,6 +160,9 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         final Block.Kind kind;
         final int start;   // 在原文中的起始（含）
         final int end;     // 在原文中的结束（不含）
+    }
+
+    private record ParentRange(int start, int end, String headingPath) {
     }
 
     // ----------- 1) 线性扫描生成块 -----------
@@ -218,6 +275,97 @@ public class StructureAwareTextChunker implements ChunkingStrategy {
         }
         out.add(prev);
         return out;
+    }
+
+    private List<ParentRange> buildParentRanges(String text, ParentChildOptions opts) {
+        List<Block> blocks = segmentToBlocks(text);
+        if (blocks.isEmpty()) {
+            return List.of(new ParentRange(0, text.length(), ""));
+        }
+
+        List<ParentRange> sections = new ArrayList<>();
+        int sectionStart = blocks.get(0).start;
+        String headingPath = "";
+        for (Block block : blocks) {
+            if (block.kind == Block.Kind.HEADING) {
+                if (sectionStart < block.start && StrUtil.isNotBlank(text.substring(sectionStart, block.start))) {
+                    sections.add(new ParentRange(sectionStart, block.start, headingPath));
+                }
+                sectionStart = block.start;
+                headingPath = extractHeadingTitle(text.substring(block.start, block.end));
+            }
+        }
+        if (sectionStart < text.length() && StrUtil.isNotBlank(text.substring(sectionStart))) {
+            sections.add(new ParentRange(sectionStart, text.length(), headingPath));
+        }
+        if (sections.isEmpty()) {
+            return List.of(new ParentRange(0, text.length(), ""));
+        }
+
+        List<ParentRange> parents = new ArrayList<>();
+        int target = Math.max(1, opts.parentTargetChars());
+        int max = Math.max(target, opts.parentMaxChars());
+        ParentRange current = null;
+        for (ParentRange section : sections) {
+            if (current == null) {
+                current = section;
+                continue;
+            }
+            int mergedSize = section.end - current.start;
+            if ((current.end - current.start) < target && mergedSize <= max) {
+                current = new ParentRange(current.start, section.end, firstNonBlank(current.headingPath, section.headingPath));
+            } else {
+                parents.add(current);
+                current = section;
+            }
+        }
+        if (current != null) {
+            parents.add(current);
+        }
+        return parents;
+    }
+
+    private List<int[]> splitRangeToChildren(String text, int rangeStart, int rangeEnd, int chunkSize, int overlap) {
+        List<int[]> ranges = new ArrayList<>();
+        int start = rangeStart;
+        while (start < rangeEnd) {
+            int targetEnd = Math.min(start + chunkSize, rangeEnd);
+            int end = targetEnd >= rangeEnd ? rangeEnd : adjustChildEndToBoundary(text, start, targetEnd);
+            if (end <= start) {
+                end = targetEnd;
+            }
+            ranges.add(new int[]{start, end});
+            if (end >= rangeEnd) {
+                break;
+            }
+            int nextStart = Math.max(rangeStart, end - overlap);
+            start = nextStart > start ? nextStart : end;
+        }
+        return ranges;
+    }
+
+    private int adjustChildEndToBoundary(String text, int start, int targetEnd) {
+        int minEnd = start + Math.max(1, (targetEnd - start) / 2);
+        String[] separators = {"\n\n", "。", "！", "？", "\n", "，", "、", " "};
+        int best = -1;
+        int bestLength = 0;
+        for (String separator : separators) {
+            int idx = text.lastIndexOf(separator, targetEnd - 1);
+            if (idx >= minEnd && idx > best) {
+                best = idx;
+                bestLength = separator.length();
+            }
+        }
+        return best >= 0 ? best + bestLength : targetEnd;
+    }
+
+    private String extractHeadingTitle(String headingLine) {
+        String line = headingLine == null ? "" : headingLine.strip();
+        return line.replaceFirst("^#{1,6}\\s+", "").strip();
+    }
+
+    private String firstNonBlank(String first, String second) {
+        return StrUtil.isNotBlank(first) ? first : (second == null ? "" : second);
     }
 
     // ----------- 2) 打包成 chunk（仅在块边界切） -----------

@@ -22,6 +22,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * RAG 检索命中结果
  * <p>
@@ -51,4 +54,18 @@ public class RetrievedChunk {
      * 数值越大表示与查询的相关性越高
      */
     private Float score;
+
+    /**
+     * 向量库返回的元数据
+     * 用于父子分块、邻居扩展、来源定位等后续处理
+     */
+    @Builder.Default
+    private Map<String, Object> metadata = new HashMap<>();
+
+    public RetrievedChunk(String id, String text, Float score) {
+        this.id = id;
+        this.text = text;
+        this.score = score;
+        this.metadata = new HashMap<>();
+    }
 }

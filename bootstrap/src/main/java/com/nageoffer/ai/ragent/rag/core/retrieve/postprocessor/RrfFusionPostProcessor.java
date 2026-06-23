@@ -27,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -175,6 +176,7 @@ public class RrfFusionPostProcessor implements SearchResultPostProcessor {
                     .id(representative.getId())
                     .text(representative.getText())
                     .score(fusedScore)
+                    .metadata(new HashMap<>(representative.getMetadata()))
                     .build();
         }
 

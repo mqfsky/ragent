@@ -60,6 +60,61 @@ const PROCESS_MODE_OPTIONS = [
 ];
 
 const NO_CHUNK_VALUE = -1;
+const PARENT_CHILD_STRATEGY = "parent_child";
+const STRUCTURE_AWARE_STRATEGY = "structure_aware";
+
+const LEGACY_STRUCTURE_CONFIG = {
+  targetChars: 1400,
+  maxChars: 1800,
+  minChars: 600,
+  overlapChars: 0
+};
+
+const PARENT_CHILD_CONFIG = {
+  parentTargetChars: 1800,
+  parentMaxChars: 2600,
+  childChunkSize: 500,
+  childOverlapSize: 80,
+  siblingWindow: 1
+};
+
+const getChunkStrategyOptions = (strategies: ChunkStrategyOption[]): ChunkStrategyOption[] => {
+  const fixedSize = strategies.find((strategy) => strategy.value === "fixed_size");
+  const structureAware = strategies.find((strategy) => strategy.value === STRUCTURE_AWARE_STRATEGY);
+  const parentChildDefaults =
+    structureAware?.defaultConfig && "parentTargetChars" in structureAware.defaultConfig
+      ? structureAware.defaultConfig
+      : PARENT_CHILD_CONFIG;
+
+  return [
+    {
+      value: "fixed_size",
+      label: fixedSize?.label || "固定大小",
+      defaultConfig: fixedSize?.defaultConfig || { chunkSize: 512, overlapSize: 128 }
+    },
+    {
+      value: STRUCTURE_AWARE_STRATEGY,
+      label: "结构感知（传统）",
+      defaultConfig: LEGACY_STRUCTURE_CONFIG
+    },
+    {
+      value: PARENT_CHILD_STRATEGY,
+      label: "父子分块（推荐）",
+      defaultConfig: parentChildDefaults
+    }
+  ];
+};
+
+const toBackendChunkStrategy = (strategy?: string | null) =>
+  strategy === PARENT_CHILD_STRATEGY ? STRUCTURE_AWARE_STRATEGY : strategy;
+
+const resolveUiChunkStrategy = (strategy?: string | null, config: Record<string, unknown> = {}) => {
+  const normalized = strategy?.toLowerCase();
+  if (normalized === STRUCTURE_AWARE_STRATEGY && "parentTargetChars" in config) {
+    return PARENT_CHILD_STRATEGY;
+  }
+  return normalized || STRUCTURE_AWARE_STRATEGY;
+};
 
 const parseChunkConfig = (raw?: string | null): Record<string, unknown> => {
   if (!raw) return {};
@@ -112,7 +167,7 @@ const formatSourceLabel = (sourceType?: string | null) => {
 const ProcessModeCell = ({ doc, pipelineMap }: { doc: KnowledgeDocument; pipelineMap: Map<string, string> }) => {
   const mode = doc.processMode?.toLowerCase();
   if (mode === "chunk") {
-    const detail = doc.chunkStrategy ? formatChunkStrategy(doc.chunkStrategy) : null;
+    const detail = doc.chunkStrategy ? formatChunkStrategy(resolveUiChunkStrategy(doc.chunkStrategy, parseChunkConfig(doc.chunkConfig))) : null;
     const trigger = <span className="cursor-default text-sm">Chunk</span>;
     if (!detail) return trigger;
     return (
@@ -147,6 +202,7 @@ const formatChunkStrategy = (strategy?: string | null) => {
   const normalized = strategy?.toLowerCase();
   if (normalized === "fixed_size") return "固定大小";
   if (normalized === "structure_aware") return "语义感知（Markdown友好）";
+  if (normalized === PARENT_CHILD_STRATEGY) return "父子分块";
   return strategy || "-";
 };
 
@@ -326,7 +382,6 @@ export function KnowledgeDocumentsPage() {
       setDetailName(detailTarget.docName || "");
       const mode = (detailTarget.processMode || "chunk").toLowerCase();
       setDetailProcessMode(mode);
-      setDetailChunkStrategy((detailTarget.chunkStrategy || "structure_aware").toLowerCase());
       setDetailPipelineId(detailTarget.pipelineId ? String(detailTarget.pipelineId) : "");
       setDetailSourceLocation(detailTarget.sourceLocation || "");
       setDetailScheduleEnabled(Boolean(detailTarget.scheduleEnabled));
@@ -339,6 +394,7 @@ export function KnowledgeDocumentsPage() {
         values[k] = String(v);
       }
       setDetailConfigValues(values);
+      setDetailChunkStrategy(resolveUiChunkStrategy(detailTarget.chunkStrategy, config));
 
       // 如果 chunkSize 为 -1（不分块），初始化开关状态
       const rawChunkSize = values["chunkSize"];
@@ -432,13 +488,15 @@ export function KnowledgeDocumentsPage() {
         processMode: detailProcessMode,
       };
       if (detailProcessMode === "chunk") {
-        data.chunkStrategy = detailChunkStrategy;
+        data.chunkStrategy = toBackendChunkStrategy(detailChunkStrategy);
         // 根据策略的 defaultConfig keys 组装 chunkConfig JSON
-        const strategy = detailStrategies.find(s => s.value === detailChunkStrategy);
+        const strategy = getChunkStrategyOptions(detailStrategies).find(s => s.value === detailChunkStrategy);
         if (strategy) {
           const configObj: Record<string, number> = {};
           for (const key of Object.keys(strategy.defaultConfig)) {
-            configObj[key] = Number(detailConfigValues[key]) || strategy.defaultConfig[key];
+            const rawValue = detailConfigValues[key];
+            const parsed = rawValue && rawValue.trim() !== "" ? Number(rawValue) : Number.NaN;
+            configObj[key] = Number.isFinite(parsed) ? parsed : strategy.defaultConfig[key];
           }
           data.chunkConfig = JSON.stringify(configObj);
         }
@@ -524,7 +582,7 @@ export function KnowledgeDocumentsPage() {
   // 当策略切换时，用默认值填充配置
   const handleDetailStrategyChange = (value: string) => {
     setDetailChunkStrategy(value);
-    const strategy = detailStrategies.find(s => s.value === value);
+    const strategy = getChunkStrategyOptions(detailStrategies).find(s => s.value === value);
     if (strategy) {
       const values: Record<string, string> = {};
       for (const [k, v] of Object.entries(strategy.defaultConfig)) {
@@ -1004,7 +1062,7 @@ export function KnowledgeDocumentsPage() {
                     <Select value={detailChunkStrategy} onValueChange={handleDetailStrategyChange}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {detailStrategies.map(s => (
+                        {getChunkStrategyOptions(detailStrategies).map(s => (
                           <SelectItem key={s.value} value={s.value}>{s.label || s.value}</SelectItem>
                         ))}
                       </SelectContent>
@@ -1046,6 +1104,34 @@ export function KnowledgeDocumentsPage() {
                           </button>
                         </div>
                         <div className="text-sm text-muted-foreground mt-1">开启后块大小为-1</div>
+                      </div>
+                    </div>
+                  ) : detailChunkStrategy === PARENT_CHILD_STRATEGY ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div>
+                        <div className="text-sm font-medium mb-2">父块目标大小</div>
+                        <Input type="number" value={detailConfigValues["parentTargetChars"] ?? "1800"}
+                          onChange={e => setDetailConfigValues(v => ({ ...v, parentTargetChars: e.target.value }))} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium mb-2">父块上限</div>
+                        <Input type="number" value={detailConfigValues["parentMaxChars"] ?? "2600"}
+                          onChange={e => setDetailConfigValues(v => ({ ...v, parentMaxChars: e.target.value }))} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium mb-2">子块大小</div>
+                        <Input type="number" value={detailConfigValues["childChunkSize"] ?? "500"}
+                          onChange={e => setDetailConfigValues(v => ({ ...v, childChunkSize: e.target.value }))} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium mb-2">子块重叠</div>
+                        <Input type="number" value={detailConfigValues["childOverlapSize"] ?? "80"}
+                          onChange={e => setDetailConfigValues(v => ({ ...v, childOverlapSize: e.target.value }))} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium mb-2">邻居窗口</div>
+                        <Input type="number" value={detailConfigValues["siblingWindow"] ?? "1"}
+                          onChange={e => setDetailConfigValues(v => ({ ...v, siblingWindow: e.target.value }))} />
                       </div>
                     </div>
                   ) : (
@@ -1291,7 +1377,12 @@ const uploadSchema = z
     targetChars: z.string().optional(),
     maxChars: z.string().optional(),
     minChars: z.string().optional(),
-    overlapChars: z.string().optional()
+    overlapChars: z.string().optional(),
+    parentTargetChars: z.string().optional(),
+    parentMaxChars: z.string().optional(),
+    childChunkSize: z.string().optional(),
+    childOverlapSize: z.string().optional(),
+    siblingWindow: z.string().optional()
   })
   .superRefine((values, ctx) => {
     const isBlank = (value?: string) => !value || value.trim() === "";
@@ -1340,6 +1431,12 @@ const uploadSchema = z
       if (values.chunkStrategy === "fixed_size") {
         requireNumber(values.chunkSize, "chunkSize", "块大小");
         requireNumber(values.overlapSize, "overlapSize", "重叠大小");
+      } else if (values.chunkStrategy === PARENT_CHILD_STRATEGY) {
+        requireNumber(values.parentTargetChars, "parentTargetChars", "父块目标大小");
+        requireNumber(values.parentMaxChars, "parentMaxChars", "父块上限");
+        requireNumber(values.childChunkSize, "childChunkSize", "子块大小");
+        requireNumber(values.childOverlapSize, "childOverlapSize", "子块重叠");
+        requireNumber(values.siblingWindow, "siblingWindow", "邻居窗口");
       } else {
         requireNumber(values.targetChars, "targetChars", "理想块大小");
         requireNumber(values.maxChars, "maxChars", "块上限");
@@ -1386,7 +1483,12 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
       targetChars: "1400",
       maxChars: "1800",
       minChars: "600",
-      overlapChars: "0"
+      overlapChars: "0",
+      parentTargetChars: "1800",
+      parentMaxChars: "2600",
+      childChunkSize: "500",
+      childOverlapSize: "80",
+      siblingWindow: "1"
     }
   });
 
@@ -1399,6 +1501,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
   const isChunkMode = processMode === "chunk";
   const isPipelineMode = processMode === "pipeline";
   const isFixedSize = chunkStrategy === "fixed_size";
+  const isParentChild = chunkStrategy === PARENT_CHILD_STRATEGY;
 
   const loadPipelines = async () => {
     setLoadingPipelines(true);
@@ -1429,7 +1532,12 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
         targetChars: "1400",
         maxChars: "1800",
         minChars: "600",
-        overlapChars: "0"
+        overlapChars: "0",
+        parentTargetChars: "1800",
+        parentMaxChars: "2600",
+        childChunkSize: "500",
+        childOverlapSize: "80",
+        siblingWindow: "1"
       });
       setNoChunk(false);
       setOriginalChunkSize("512");
@@ -1449,7 +1557,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
 
   // 切换策略时，用 API 返回的默认值填充表单
   useEffect(() => {
-    const strategy = chunkStrategies.find((s) => s.value === chunkStrategy);
+    const strategy = getChunkStrategyOptions(chunkStrategies).find((s) => s.value === chunkStrategy);
     if (!strategy) return;
     const defaults = strategy.defaultConfig;
     const formAccessors: Record<string, (v: string) => void> = {
@@ -1458,7 +1566,12 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
       targetChars: (v) => form.setValue("targetChars", v),
       maxChars: (v) => form.setValue("maxChars", v),
       minChars: (v) => form.setValue("minChars", v),
-      overlapChars: (v) => form.setValue("overlapChars", v)
+      overlapChars: (v) => form.setValue("overlapChars", v),
+      parentTargetChars: (v) => form.setValue("parentTargetChars", v),
+      parentMaxChars: (v) => form.setValue("parentMaxChars", v),
+      childChunkSize: (v) => form.setValue("childChunkSize", v),
+      childOverlapSize: (v) => form.setValue("childOverlapSize", v),
+      siblingWindow: (v) => form.setValue("siblingWindow", v)
     };
     for (const key of Object.keys(strategy.defaultConfig)) {
       if (defaults[key] !== undefined && formAccessors[key]) {
@@ -1511,7 +1624,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
     // 根据当前策略的 defaultConfig keys 从表单值组装 chunkConfig JSON
     let chunkConfig: string | undefined;
     if (values.processMode === "chunk") {
-      const strategy = chunkStrategies.find((s) => s.value === values.chunkStrategy);
+      const strategy = getChunkStrategyOptions(chunkStrategies).find((s) => s.value === values.chunkStrategy);
       if (strategy) {
         const formAccessors: Record<string, string | undefined> = {
           chunkSize: values.chunkSize,
@@ -1519,7 +1632,12 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
           targetChars: values.targetChars,
           maxChars: values.maxChars,
           minChars: values.minChars,
-          overlapChars: values.overlapChars
+          overlapChars: values.overlapChars,
+          parentTargetChars: values.parentTargetChars,
+          parentMaxChars: values.parentMaxChars,
+          childChunkSize: values.childChunkSize,
+          childOverlapSize: values.childOverlapSize,
+          siblingWindow: values.siblingWindow
         };
         const config: Record<string, number> = {};
         for (const key of Object.keys(strategy.defaultConfig)) {
@@ -1544,7 +1662,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
             ? values.scheduleCron.trim()
             : null,
         processMode: values.processMode,
-        chunkStrategy: values.processMode === "chunk" ? values.chunkStrategy : undefined,
+        chunkStrategy: values.processMode === "chunk" ? toBackendChunkStrategy(values.chunkStrategy) || undefined : undefined,
         chunkConfig: chunkConfig ?? null,
         pipelineId: values.processMode === "pipeline" ? values.pipelineId : null
       };
@@ -1778,7 +1896,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {chunkStrategies.map((option) => (
+                            {getChunkStrategyOptions(chunkStrategies).map((option) => (
                               <SelectItem key={option.value} value={option.value}>
                                 {option.label}
                               </SelectItem>
@@ -1846,6 +1964,74 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
                     </FormItem>
                   </div>
                 </>
+              ) : isParentChild ? (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="parentTargetChars"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground font-normal">父块目标大小</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="parentMaxChars"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground font-normal">父块上限</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="childChunkSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground font-normal">子块大小</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="childOverlapSize"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground font-normal">子块重叠</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="siblingWindow"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs text-muted-foreground font-normal">邻居窗口</FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
                   <FormField

@@ -17,23 +17,33 @@
 
 package com.nageoffer.ai.ragent.rag.core.retrieve;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nageoffer.ai.ragent.framework.convention.RetrievedChunk;
 import com.nageoffer.ai.ragent.rag.config.SearchChannelProperties;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 基于 PostgreSQL 全文检索的关键词检索服务
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @ConditionalOnProperty(name = "rag.vector.type", havingValue = "pg")
 public class PgKeywordRetrieverService implements KeywordRetrieverService {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
+    };
 
     private final JdbcTemplate jdbcTemplate;
     private final SearchChannelProperties properties;
@@ -54,7 +64,7 @@ public class PgKeywordRetrieverService implements KeywordRetrieverService {
                 WITH q AS (
                     SELECT %s AS query
                 )
-                SELECT id, content, ts_rank_cd(%s, q.query) AS score
+                SELECT id, content, metadata, ts_rank_cd(%s, q.query) AS score
                 FROM t_knowledge_vector, q
                 WHERE metadata->>'collection_name' = ?
                   AND %s @@ q.query
@@ -68,10 +78,24 @@ public class PgKeywordRetrieverService implements KeywordRetrieverService {
                         .id(rs.getString("id"))
                         .text(rs.getString("content"))
                         .score(rs.getFloat("score"))
+                        .metadata(parseMetadata(rs.getString("metadata")))
                         .build(),
                 request.getQuery(),
                 request.getCollectionName(),
                 request.getTopK());
+    }
+
+    private Map<String, Object> parseMetadata(String metadataJson) {
+        if (!StringUtils.hasText(metadataJson)) {
+            return new HashMap<>();
+        }
+        try {
+            Map<String, Object> parsed = OBJECT_MAPPER.readValue(metadataJson, MAP_TYPE);
+            return parsed == null ? new HashMap<>() : new HashMap<>(parsed);
+        } catch (Exception e) {
+            log.warn("关键词召回元数据解析失败: {}", metadataJson, e);
+            return new HashMap<>();
+        }
     }
 
     private String resolveTextSearchConfig() {

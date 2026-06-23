@@ -25,6 +25,7 @@ import com.nageoffer.ai.ragent.rag.core.retrieve.channel.SearchContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -73,6 +74,35 @@ class RrfFusionPostProcessorTest {
         assertEquals(List.of("a", "b"), fused.stream().map(RetrievedChunk::getId).toList());
     }
 
+    @Test
+    void shouldPreserveRepresentativeMetadataForLaterPostProcessors() {
+        SearchChannelProperties properties = new SearchChannelProperties();
+        RrfFusionPostProcessor processor = new RrfFusionPostProcessor(properties);
+
+        RetrievedChunk vectorChunk = chunk("shared", "共同命中", 0.80F, Map.of(
+                "collection_name", "kb-docs",
+                "parentId", "parent-1",
+                "childIndex", 1,
+                "parentChildCount", 3
+        ));
+        RetrievedChunk keywordChunk = chunk("shared", "共同命中", 3.0F, Map.of(
+                "collection_name", "kb-docs",
+                "parentId", "parent-1",
+                "childIndex", 2,
+                "parentChildCount", 3
+        ));
+
+        List<SearchChannelResult> results = List.of(
+                result(SearchChannelType.VECTOR_GLOBAL, vectorChunk),
+                result(SearchChannelType.KEYWORD_ES, keywordChunk)
+        );
+
+        List<RetrievedChunk> fused = processor.process(List.of(), results, SearchContext.builder().topK(3).build());
+
+        assertEquals(1, fused.size());
+        assertEquals(keywordChunk.getMetadata(), fused.get(0).getMetadata());
+    }
+
     private SearchChannelResult result(SearchChannelType type, RetrievedChunk... chunks) {
         return SearchChannelResult.builder()
                 .channelType(type)
@@ -86,6 +116,15 @@ class RrfFusionPostProcessorTest {
                 .id(id)
                 .text(text)
                 .score(score)
+                .build();
+    }
+
+    private RetrievedChunk chunk(String id, String text, Float score, Map<String, Object> metadata) {
+        return RetrievedChunk.builder()
+                .id(id)
+                .text(text)
+                .score(score)
+                .metadata(metadata)
                 .build();
     }
 }

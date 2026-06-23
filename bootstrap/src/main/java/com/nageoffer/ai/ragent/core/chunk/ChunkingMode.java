@@ -58,20 +58,34 @@ public enum ChunkingMode {
     STRUCTURE_AWARE("structure_aware", "语义感知（Markdown友好）", true) {
         @Override
         public ChunkingOptions createOptions(Map<String, Object> config) {
-            return new TextBoundaryOptions(
-                    toInt(config, "targetChars", 1400),
-                    toInt(config, "overlapChars", 0),
-                    toInt(config, "maxChars", 1800),
-                    toInt(config, "minChars", 600));
+            if (hasAnyKey(config, "targetChars", "overlapChars", "maxChars", "minChars")) {
+                return new TextBoundaryOptions(
+                        toInt(config, "targetChars", 1400),
+                        toInt(config, "overlapChars", 0),
+                        toInt(config, "maxChars", 1800),
+                        toInt(config, "minChars", 600));
+            }
+            return new ParentChildOptions(
+                    toInt(config, "parentTargetChars", 1800),
+                    toInt(config, "parentMaxChars", 2600),
+                    toInt(config, "childChunkSize", 500),
+                    toInt(config, "childOverlapSize", 80),
+                    toInt(config, "siblingWindow", 1));
         }
 
         @Override
         public ChunkingOptions createDefaultOptions(Integer targetSize, Integer overlapSize) {
-            return new TextBoundaryOptions(
-                    targetSize != null ? targetSize : 1400,
-                    overlapSize != null ? overlapSize : 0,
+            return new ParentChildOptions(
                     1800,
-                    600);
+                    2600,
+                    targetSize != null ? targetSize : 500,
+                    overlapSize != null ? overlapSize : 80,
+                    1);
+        }
+
+        @Override
+        public Map<String, Integer> getDefaultConfig() {
+            return new ParentChildOptions(1800, 2600, 500, 80, 1).toConfigMap();
         }
     };
 
@@ -123,6 +137,18 @@ public enum ChunkingMode {
             }
         }
         return defaultValue;
+    }
+
+    static boolean hasAnyKey(Map<String, Object> config, String... keys) {
+        if (config == null || config.isEmpty()) {
+            return false;
+        }
+        for (String key : keys) {
+            if (config.containsKey(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @JsonCreator
